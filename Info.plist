@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>NotchIsland</string>
+    <key>CFBundleIdentifier</key>
+    <string>local.notchisland.app</string>
+    <key>CFBundleName</key>
+    <string>NotchIsland</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.4</string>
+    <key>CFBundleVersion</key>
+    <string>4</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>NotchIsland necesita controlar Música y Spotify para los botones de reproducción, la posición y la carátula.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>NotchIsland usa la cámara para el espejo del notch. Solo se enciende mientras esa pestaña está abierta.</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>NotchIsland avisa en el notch cuando se conectan AirPods y otros dispositivos Bluetooth.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>NotchIsland muestra tus recordatorios de hoy en la pestaña Hoy y te deja marcarlos como hechos.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>NotchIsland muestra tu próximo evento en la pestaña Hoy.</string>
+    <key>NSLocationUsageDescription</key>
+    <string>NotchIsland usa tu ubicación aproximada para mostrar el tiempo.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>NotchIsland usa tu ubicación aproximada para mostrar el tiempo.</string>
+</dict>
+</plist>
