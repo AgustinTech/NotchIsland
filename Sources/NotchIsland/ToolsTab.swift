@@ -7,10 +7,12 @@ struct ToolsTab: View {
     @ObservedObject var quick: QuickActions
 
     var body: some View {
-        HStack(spacing: 10) {
-            TimerPanel(model: timer)
-                .frame(width: 262)
-            QuickGrid(quick: quick, closeIsland: { state.close() })
+        GeometryReader { geometry in
+            HStack(spacing: 10) {
+                TimerPanel(model: timer)
+                    .frame(width: min(262, max(220, geometry.size.width * 0.56)))
+                QuickGrid(quick: quick, closeIsland: { state.close() })
+            }
         }
         .onAppear { quick.refresh() }
     }

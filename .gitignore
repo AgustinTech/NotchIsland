@@ -3,3 +3,13 @@ build/
 .DS_Store
 *.xcuserstate
 xcuserdata/
+
+# Credenciales y material de firma locales.
+.env
+.env.*
+*.p8
+*.p12
+*.pem
+*.key
+*.mobileprovision
+*.cer

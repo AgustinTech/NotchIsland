@@ -52,8 +52,8 @@ Una "isla dinámica" para el notch de tu MacBook. Pasa el ratón por el notch (o
 - **Pestaña Portapapeles**: historial con tarjetas (texto, enlaces, imágenes, archivos, colores), fijar, borrar y pegar con un clic. No guarda lo que marcan como privado ni lo que copian los gestores de contraseñas; se puede pausar o desactivar en el menú.
 - **Avisos en el notch cerrado**: descargas con progreso, AirDrop recibido y **volumen / brillo** (al abrirlo aparecen como una pastilla abajo).
 - **Firma estable**: `./build.sh` firma con tu cuenta de desarrollador de Apple si la encuentra (Xcode > Ajustes > Cuentas). Así macOS recuerda los permisos (Spotify/Música, Accesibilidad, calendario, recordatorios, ubicación, cámara, Bluetooth) entre compilaciones. Sin cuenta se firma "ad hoc" y se piden de nuevo cada vez.
-- **Permiso de Automatización**: si macOS bloquea el control de Spotify/Música, la pestaña de música lo explica y abre Ajustes con un botón.
-- **Cuenta de Spotify**: menú de la isla › "Vincular cuenta de Spotify…" (o el botón en la pestaña de música). Inicio de sesión oficial (OAuth con PKCE); necesitas tu propio *Client ID* de developer.spotify.com/dashboard con la Redirect URI `http://127.0.0.1:53682/callback`. Con la cuenta vinculada la isla lee lo que suena en cualquier dispositivo y lo controla por la API web (los controles necesitan Spotify Premium; si no, usa AppleScript). La sesión se guarda en el Llavero.
+- **Música y Spotify**: al abrirse, la app consulta la sesión multimedia de macOS y muestra la canción aunque ya estuviera sonando. También recibe los avisos de reproducción y vuelve a consultar el estado cada pocos segundos. No solicita Automatización. Si ese permiso ya estaba concedido, activa los controles y puede obtener posición exacta y carátula directamente del reproductor.
+- **Cuenta de Spotify opcional**: menú de la isla › "Vincular cuenta de Spotify…". Esta opción requiere un inicio de sesión oficial (OAuth con PKCE) y tu propio *Client ID* de developer.spotify.com/dashboard con la Redirect URI `http://127.0.0.1:53682/callback`. Sirve para leer y controlar lo que suena en cualquier dispositivo; los controles web necesitan Spotify Premium. La sesión se guarda en el Llavero.
 - **HUD de volumen y brillo**: para que el HUD del sistema no salga a la vez, NotchIsland intercepta esas teclas y aplica el cambio él mismo. Necesita **Accesibilidad** (Ajustes > Privacidad y seguridad > Accesibilidad). Sin el permiso, el sistema muestra el suyo. Se desactiva en el menú ("Ocultar el HUD del sistema").
 
 ## Cómo compilarla
@@ -73,7 +73,7 @@ Para comprobar el lector de letras sincronizadas: `swift test`.
 
 | Permiso | Cuándo | Para qué |
 |---|---|---|
-| Automatización (Música / Spotify) | al sonar música o pulsar un botón | botones, posición y carátula |
+| Automatización (Música / Spotify) | no se solicita automáticamente | si ya estaba concedida: botones, posición exacta y carátula |
 | Calendario | al abrir la pestaña Hoy | próximo evento |
 | Ubicación | al abrir la pestaña Hoy | tiempo |
 | Cámara | al abrir la pestaña Espejo | espejo |
@@ -92,6 +92,7 @@ Si rechazas alguno por error: Ajustes del Sistema → Privacidad y seguridad.
 ## Límites conocidos
 
 - La carátula de Música solo funciona con canciones de tu biblioteca; si falla se ve un icono de nota.
+- Sin Automatización ni una cuenta de Spotify vinculada, los controles del reproductor quedan desactivados. La lectura inicial usa MediaRemote, una API privada de macOS: si el sistema no publica esa sesión o cambia la API, la detección depende de los avisos del reproductor.
 - Las letras dependen de que lrclib.net tenga la canción.
 - La bandeja guarda referencias a los archivos, no copias.
 - Solo Música y Spotify. Para YouTube, Safari, etc. haría falta un componente extra (macOS 15.4+ bloqueó la API que usaban esas apps).

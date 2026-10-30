@@ -23,24 +23,28 @@ struct NotchShape: Shape {
 
         var p = Path()
         p.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        p.addQuadCurve(
+        p.addCurve(
             to: CGPoint(x: rect.minX + t, y: rect.minY + t),
-            control: CGPoint(x: rect.minX + t, y: rect.minY)
+            control1: CGPoint(x: rect.minX + t * 0.72, y: rect.minY),
+            control2: CGPoint(x: rect.minX + t, y: rect.minY + t * 0.28)
         )
         p.addLine(to: CGPoint(x: rect.minX + t, y: rect.maxY - b))
-        p.addQuadCurve(
+        p.addCurve(
             to: CGPoint(x: rect.minX + t + b, y: rect.maxY),
-            control: CGPoint(x: rect.minX + t, y: rect.maxY)
+            control1: CGPoint(x: rect.minX + t, y: rect.maxY - b * 0.45),
+            control2: CGPoint(x: rect.minX + t + b * 0.45, y: rect.maxY)
         )
         p.addLine(to: CGPoint(x: rect.maxX - t - b, y: rect.maxY))
-        p.addQuadCurve(
+        p.addCurve(
             to: CGPoint(x: rect.maxX - t, y: rect.maxY - b),
-            control: CGPoint(x: rect.maxX - t, y: rect.maxY)
+            control1: CGPoint(x: rect.maxX - t - b * 0.45, y: rect.maxY),
+            control2: CGPoint(x: rect.maxX - t, y: rect.maxY - b * 0.45)
         )
         p.addLine(to: CGPoint(x: rect.maxX - t, y: rect.minY + t))
-        p.addQuadCurve(
+        p.addCurve(
             to: CGPoint(x: rect.maxX, y: rect.minY),
-            control: CGPoint(x: rect.maxX - t, y: rect.minY)
+            control1: CGPoint(x: rect.maxX - t, y: rect.minY + t * 0.28),
+            control2: CGPoint(x: rect.maxX - t * 0.72, y: rect.minY)
         )
         p.closeSubpath()
         return p
@@ -56,8 +60,8 @@ struct IslandView: View {
     @ObservedObject var power: PowerModel
     let services: Services
 
-    private let openSpring = Animation.spring(response: 0.45, dampingFraction: 0.82)
-    private let closeSpring = Animation.spring(response: 0.38, dampingFraction: 0.92)
+    private let openSpring = Animation.spring(response: 0.52, dampingFraction: 0.88)
+    private let closeSpring = Animation.spring(response: 0.44, dampingFraction: 0.92)
     private let liveSpring = Animation.spring(response: 0.45, dampingFraction: 0.72)
     private let hoverSpring = Animation.spring(response: 0.28, dampingFraction: 0.58)
 
@@ -78,17 +82,13 @@ struct IslandView: View {
         // final y la forma lo va descubriendo; solo cambia su opacidad (con tiempos distintos al
         // abrir y al cerrar) para que nada salte ni aparezca fantasma dentro de la caja.
         ZStack(alignment: .top) {
-            Color.black
+            IslandBackdrop(expanded: expanded)
 
             if state.contentMounted {
                 Group {
-                    if state.tab == .music && player.hasTrack {
-                        MusicBackdrop(player: player, reduceMotionSetting: state.reduceMotion)
-                            .frame(width: open.width + 40, height: open.height)
-                    }
                     ExpandedContent(state: state, player: player, power: power, services: services)
                         .frame(width: open.width, height: open.height)
-                        .scaleEffect(expanded ? 1 : 0.97, anchor: .top)
+                        .scaleEffect(expanded ? 1 : 0.985, anchor: .top)
                 }
                 .opacity(expanded ? 1 : 0)
                 .allowsHitTesting(expanded)
@@ -120,23 +120,12 @@ struct IslandView: View {
             }
         }
         .frame(width: size.width + ear * 2, height: size.height, alignment: .top)
-        .overlay(
-            shape.stroke(
-                LinearGradient(
-                    stops: [
-                        .init(color: Color.white.opacity(0), location: 0),
-                        .init(color: Color.white.opacity(0.16), location: 0.55),
-                        .init(color: Color.white.opacity(0.06), location: 1)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                ),
-                lineWidth: 1
-            )
-            .opacity(expanded ? 1 : 0)
-        )
         .clipShape(shape)
-        .shadow(color: Color.black.opacity(expanded ? 0.45 : 0), radius: 16, y: 8)
+        .overlay {
+            shape.stroke(Color.white.opacity(expanded ? 0.10 : 0), lineWidth: 0.75)
+                .allowsHitTesting(false)
+        }
+        .shadow(color: Color.black.opacity(expanded ? 0.42 : 0), radius: 14, y: 7)
         // Con la isla abierta el HUD de volumen/brillo sale como una pastilla DEBAJO de la isla (no tapa nada).
         .overlay(alignment: .bottom) {
             if expanded, let kind = state.hudKind {
@@ -164,53 +153,47 @@ struct IslandView: View {
     private let closeFade = Animation.easeIn(duration: 0.2)
 }
 
-// MARK: - Fondo con el color de la carátula
+// MARK: - Cristal translúcido (aspecto Siri)
 
-struct MusicBackdrop: View {
-    @ObservedObject var player: NowPlayingModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let reduceMotionSetting: Bool
+/// Fondo de la isla. Cerrada: negro puro, para fundirse con el notch del hardware.
+/// Abierta: se transparenta (material desenfocado del sistema) con un velo negro más
+/// claro abajo, un brillo de cristal arriba y la franja del notch siempre en negro.
+private struct IslandBackdrop: View {
+    var expanded: Bool
 
     var body: some View {
         ZStack {
-            Color(white: 0.05)
+            // Negro opaco solo cerrada; abierta, el cristal deja ver lo de detrás.
+            Color.black
+                .opacity(expanded ? 0 : 1)
 
-            if let image = player.backdrop {
-                // Dos capas de la propia carátula, ampliadas y girando despacio en sentidos
-                // contrarios (solo se mueven mientras suena), como el fondo de Apple Music.
-                TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: !player.isPlaying || reduceMotion || reduceMotionSetting)) { context in
-                    let t = context.date.timeIntervalSinceReferenceDate
-                    ZStack {
-                        layer(image, size: 800, degrees: t * 5, x: 60 * sin(t * 0.17), y: 22 * cos(t * 0.13))
-                            .opacity(0.95)
-                        layer(image, size: 760, degrees: 50 - t * 4, x: -70 * cos(t * 0.14), y: 26 * sin(t * 0.2))
-                            .opacity(0.4)
-                            .blendMode(.plusLighter)
-                    }
-                }
-                .transition(.opacity)
-            }
+            Rectangle().fill(.ultraThinMaterial)
+                .opacity(expanded ? 1 : 0)
 
-            // Un velo uniforme y otro hacia abajo para que texto y controles se lean bien.
-            Color.black.opacity(0.22 + 0.38 * player.backdropLuma)
+            // Velo: negro sólido arriba (como el panel de Siri) y fundido a cristal abajo.
             LinearGradient(
-                colors: [Color.black.opacity(0), Color.black.opacity(0.45)],
+                stops: [
+                    .init(color: .black, location: 0),
+                    .init(color: .black, location: 0.42),
+                    .init(color: .black.opacity(0.55), location: 0.75),
+                    .init(color: .black.opacity(0.32), location: 1)
+                ],
                 startPoint: .top,
                 endPoint: .bottom
             )
-        }
-        .clipped()
-        .animation(.easeInOut(duration: 0.8), value: player.backdrop == nil)
-    }
+            .opacity(expanded ? 1 : 0)
 
-    private func layer(_ image: NSImage, size: CGFloat, degrees: Double, x: Double, y: Double) -> some View {
-        Image(nsImage: image)
-            .resizable()
-            .interpolation(.high)
-            .aspectRatio(contentMode: .fill)
-            .frame(width: size, height: size)
-            .rotationEffect(.degrees(degrees))
-            .offset(x: x, y: y)
+            // Reflejo del cristal en la parte alta.
+            LinearGradient(
+                stops: [
+                    .init(color: .white.opacity(0.05), location: 0),
+                    .init(color: .white.opacity(0), location: 0.3)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .opacity(expanded ? 1 : 0)
+        }
     }
 }
 
@@ -436,8 +419,8 @@ struct ExpandedContent: View {
             .id(state.tab)
             .transition(state.tabTransition)
             .padding(.horizontal, 22)
-            .padding(.top, 10)
-            .padding(.bottom, 14)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .animation(systemReduceMotion || state.reduceMotion ? nil : .spring(response: 0.38, dampingFraction: 0.86).speed(state.animationSpeed), value: state.tab)
@@ -451,21 +434,41 @@ struct TopBar: View {
     @ObservedObject var power: PowerModel
     @Namespace private var tabSpace
 
-    /// Reserva a cada lado el espacio físico del notch, también con seis pestañas visibles.
+    /// El notch físico determina cuántos controles caben a cada lado.
+    private var sideWidth: CGFloat {
+        max(24, (state.expandedSize.width - state.notchSize.width) / 2 - 16)
+    }
+
+    private var tabSlots: Int { max(1, Int(sideWidth / 24)) }
+
+    private var primaryTabs: [IslandTab] {
+        let tabs = state.visibleTabs
+        guard tabs.count > tabSlots else { return tabs }
+        var shown = Array(tabs.prefix(max(0, tabSlots - 1)))
+        if !shown.isEmpty, !shown.contains(state.tab) { shown[shown.count - 1] = state.tab }
+        return shown
+    }
+
+    private var overflowTabs: [IslandTab] {
+        state.visibleTabs.filter { !primaryTabs.contains($0) }
+    }
+
     private var tabWidth: CGFloat {
-        let side = (state.expandedSize.width - state.notchSize.width) / 2 - 18
-        return min(25, max(18, floor(side / CGFloat(max(state.visibleTabs.count, 1)))))
+        let count = primaryTabs.count + (overflowTabs.isEmpty ? 0 : 1)
+        return min(25, floor(sideWidth / CGFloat(max(count, 1))))
+    }
+
+    private func select(_ tab: IslandTab) {
+        withAnimation(systemReduceMotion || state.reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.78).speed(state.animationSpeed)) {
+            state.tab = tab
+        }
     }
 
     var body: some View {
         HStack(spacing: 0) {
             HStack(spacing: 0) {
-                ForEach(state.visibleTabs) { tab in
-                    Button {
-                        withAnimation(systemReduceMotion || state.reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.78).speed(state.animationSpeed)) {
-                            state.tab = tab
-                        }
-                    } label: {
+                ForEach(primaryTabs) { tab in
+                    Button { select(tab) } label: {
                         Image(systemName: tab.symbol)
                             .font(.system(size: 11.5, weight: .semibold))
                             .foregroundStyle(Color.white.opacity(state.tab == tab ? 1 : 0.45))
@@ -484,11 +487,30 @@ struct TopBar: View {
                     .accessibilityAddTraits(state.tab == tab ? .isSelected : [])
                     .help(tab.title)
                 }
+
+                if !overflowTabs.isEmpty {
+                    Menu {
+                        ForEach(overflowTabs) { tab in
+                            Button { select(tab) } label: {
+                                Label(tab.title, systemImage: tab.symbol)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: primaryTabs.isEmpty ? state.tab.symbol : "ellipsis")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(Color.white.opacity(0.72))
+                            .frame(width: tabWidth, height: 23)
+                            .contentShape(Capsule())
+                    }
+                    .menuStyle(.borderlessButton)
+                    .accessibilityLabel("Más pestañas")
+                    .help("Más pestañas")
+                }
             }
 
-            Spacer(minLength: state.notchSize.width + 8)
+            Spacer(minLength: state.notchSize.width)
 
-            HStack(spacing: 12) {
+            HStack(spacing: 8) {
                 Button {
                     state.showMenu()
                 } label: {
@@ -503,10 +525,15 @@ struct TopBar: View {
                 .help("Ajustes")
 
                 if power.hasBattery {
-                    BatteryBadge(power: power)
+                    if sideWidth < 108 {
+                        BatteryGlyph(percent: power.percent, charging: power.onAC)
+                            .accessibilityLabel("Batería: \(power.percent) por ciento")
+                    } else {
+                        BatteryBadge(power: power)
+                    }
                 }
             }
         }
-        .padding(.horizontal, 18)
+        .padding(.horizontal, 16)
     }
 }

@@ -66,6 +66,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var swallowScroll = false
 
     private let hotkey = GlobalHotkey()
+    /// Panel de música sobre la pantalla de bloqueo (mismo reproductor que la isla).
+    private var lockMusic: LockScreenPresenter?
     /// Abierta con el atajo: no se cierra sola aunque el puntero esté lejos, hasta que entre en la isla.
     private var hotkeyHold = false
     /// Abierta con el atajo: Esc la cierra mientras siga abierta.
@@ -213,6 +215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         power.start()
         player.start()
+        lockMusic = LockScreenPresenter(player: player)
         services.clipboard.start()
 
         state.activity.onAirDrop = { [weak self] count, name in
@@ -381,7 +384,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.panel.setFrame(self.currentWindowFrame(), display: true)
             }
             shrinkWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: work)
+            // La ventana no debe recortar la forma si el usuario eligió la animación lenta.
+            let shrinkDelay = max(0.7, 0.9 / state.animationSpeed)
+            DispatchQueue.main.asyncAfter(deadline: .now() + shrinkDelay, execute: work)
         }
     }
 
@@ -571,7 +576,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else if state.expanded, scrollAccum < -45, keepOpenRect().contains(point), abs(scrollAccumX) < abs(scrollAccum) {
             scrollConsumed = true
             state.close()
-        } else if state.expanded, abs(scrollAccumX) > 40, abs(scrollAccumX) > abs(scrollAccum) * 1.6, keepOpenRect().contains(point) {
+        } else if state.expanded, state.tab != .clipboard,
+                  abs(scrollAccumX) > 40, abs(scrollAccumX) > abs(scrollAccum) * 1.6,
+                  keepOpenRect().contains(point) {
+            // Portapapeles tiene su propio carrusel horizontal: dejarle recibir el gesto completo.
             // Dedos a la izquierda: pestaña siguiente (el contenido nuevo entra por la derecha); a la derecha: la anterior.
             scrollConsumed = true
             swallowScroll = state.shiftTab(scrollAccumX < 0 ? 1 : -1)

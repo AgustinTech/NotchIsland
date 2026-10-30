@@ -36,15 +36,8 @@ struct MusicTab: View {
 
                 ProgressRow(player: player)
 
-                if player.permissionNotice != nil {
-                    AutomationNotice(player: player)
-                        .padding(.top, 2)
-                        .transition(.opacity)
-                } else {
-                    PlayerControls(player: player)
-                        .padding(.top, 2)
-                        .transition(.opacity)
-                }
+                PlayerControls(player: player)
+                    .padding(.top, 2)
             }
         }
     }
@@ -71,40 +64,7 @@ struct MusicTab: View {
     }
 
     private var artwork: some View {
-        Button {
-            player.openSource()
-        } label: {
-            Group {
-                if let image = player.artwork {
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .transition(.opacity)
-                } else {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.1))
-                        .overlay(
-                            Image(systemName: "music.note")
-                                .font(.system(size: 28))
-                                .foregroundStyle(Color.white.opacity(0.5))
-                        )
-                }
-            }
-            .frame(width: 104, height: 104)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.14), lineWidth: 0.6)
-            )
-            .shadow(color: Color.black.opacity(0.5), radius: 14, y: 8)
-            .shadow(color: player.accent.opacity(player.isPlaying ? 0.35 : 0.1), radius: 18, y: 4)
-            .scaleEffect(player.isPlaying ? 1 : 0.9)
-            .animation(.spring(response: 0.5, dampingFraction: 0.62), value: player.isPlaying)
-            .animation(.easeInOut(duration: 0.4), value: player.artwork == nil)
-        }
-        .buttonStyle(ScaleButtonStyle(pressed: 0.95))
-        .accessibilityLabel("Abrir \(player.sourceName)")
-        .help("Abrir \(player.sourceName)")
+        HoverArtwork(player: player)
     }
 
     @ViewBuilder
@@ -146,36 +106,17 @@ struct MusicTab: View {
                 Text("Nada sonando")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(Color.white)
-                Text("Reproduce algo en Música o Spotify")
+                Text(player.detectedPlayer == .spotify ? "Spotify detectado; reproduce una canción" :
+                     player.detectedPlayer == .music ? "Música detectada; reproduce una canción" :
+                     "Reproduce algo en Música o Spotify")
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundStyle(Color.white.opacity(0.5))
 
-                if player.permissionNotice != nil {
-                    AutomationNotice(player: player)
-                        .padding(.top, 4)
-                } else {
-                    HStack(spacing: 8) {
-                        openButton("Música", symbol: "music.note", player: .music)
-                        openButton("Spotify", symbol: "dot.radiowaves.left.and.right", player: .spotify)
-                        if !player.spotifyLinked {
-                            Button {
-                                player.linkSpotify()
-                            } label: {
-                                HStack(spacing: 5) {
-                                    Image(systemName: "link")
-                                    Text("Vincular Spotify")
-                                }
-                                .font(.system(size: 11.5, weight: .semibold))
-                                .foregroundStyle(Color.black)
-                                .padding(.horizontal, 12)
-                                .frame(height: 27)
-                                .background(Capsule().fill(Color.white))
-                            }
-                            .buttonStyle(ScaleButtonStyle())
-                        }
-                    }
-                    .padding(.top, 6)
+                HStack(spacing: 8) {
+                    openButton("Música", symbol: "music.note", player: .music)
+                    openButton("Spotify", symbol: "dot.radiowaves.left.and.right", player: .spotify)
                 }
+                .padding(.top, 6)
             }
             Spacer(minLength: 0)
         }
@@ -197,6 +138,80 @@ struct MusicTab: View {
             .background(Capsule().fill(Color.white.opacity(0.13)))
         }
         .buttonStyle(ScaleButtonStyle())
+    }
+}
+
+// MARK: - Carátula con inclinación 3D al pasar el cursor
+
+/// Vista aparte para que el estado del hover (que cambia decenas de veces por segundo)
+/// solo re-renderice la carátula y no la pestaña entera.
+private struct HoverArtwork: View {
+    @ObservedObject var player: NowPlayingModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var hover = false
+    @State private var point: CGPoint = .zero
+
+    private var tiltX: CGFloat {
+        guard hover, !reduceMotion else { return 0 }
+        return -(point.y / 104 - 0.5) * 2 * 6
+    }
+
+    private var tiltY: CGFloat {
+        guard hover, !reduceMotion else { return 0 }
+        return (point.x / 104 - 0.5) * 2 * 9
+    }
+
+    var body: some View {
+        Button {
+            player.openSource()
+        } label: {
+            Group {
+                if let image = player.artwork {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .transition(.opacity)
+                } else {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.1))
+                        .overlay(
+                            Image(systemName: "music.note")
+                                .font(.system(size: 28))
+                                .foregroundStyle(Color.white.opacity(0.5))
+                        )
+                }
+            }
+            .frame(width: 104, height: 104)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color.white.opacity(hover ? 0.22 : 0.14), lineWidth: 0.6)
+            )
+            .shadow(color: Color.black.opacity(hover ? 0.6 : 0.5), radius: hover ? 18 : 14, y: 8)
+            .shadow(color: player.accent.opacity(player.isPlaying ? 0.35 : 0.1), radius: 18, y: 4)
+            .rotation3DEffect(.degrees(tiltY), axis: (0, 1, 0), perspective: 0.6)
+            .rotation3DEffect(.degrees(tiltX), axis: (1, 0, 0), perspective: 0.6)
+            .scaleEffect(hover ? 1.04 : (player.isPlaying ? 1 : 0.9))
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: hover)
+            .animation(.spring(response: 0.5, dampingFraction: 0.62), value: player.isPlaying)
+            .animation(.easeInOut(duration: 0.4), value: player.artwork == nil)
+            .animation(.spring(response: 0.22, dampingFraction: 0.85), value: point)
+        }
+        .buttonStyle(ScaleButtonStyle(pressed: 0.95))
+        .accessibilityLabel("Abrir \(player.sourceName)")
+        .help("Abrir \(player.sourceName)")
+        .onHover { entering in
+            hover = entering
+            if !entering { point = .zero }
+        }
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let location): point = location
+            case .ended: point = .zero
+            @unknown default: break
+            }
+        }
     }
 }
 
@@ -237,8 +252,23 @@ struct PlayerControls: View {
     @State private var nextTick = 0
 
     var body: some View {
-        ZStack {
-            HStack(spacing: 22) {
+        HStack(spacing: 0) {
+            Button {
+                player.openSource()
+            } label: {
+                Image(systemName: "arrow.up.forward.app")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.5))
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(ScaleButtonStyle())
+            .accessibilityLabel("Abrir \(player.sourceName)")
+            .help("Abrir \(player.sourceName)")
+
+            Spacer(minLength: 6)
+
+            HStack(spacing: 14) {
                 GlyphButton(symbol: "backward.fill", title: "Pista anterior", size: 17) {
                     prevTick += 1
                     player.previous()
@@ -255,38 +285,24 @@ struct PlayerControls: View {
                 }
                 .symbolEffect(.bounce.down, value: nextTick)
             }
+            .disabled(!player.canControl)
 
-            HStack {
-                Button {
-                    player.openSource()
-                } label: {
-                    Image(systemName: "arrow.up.forward.app")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.5))
-                        .frame(width: 28, height: 28)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(ScaleButtonStyle())
-                .accessibilityLabel("Abrir \(player.sourceName)")
-                .help("Abrir \(player.sourceName)")
+            Spacer(minLength: 6)
 
-                Spacer(minLength: 0)
-
-                HStack(spacing: 6) {
-                    Image(systemName: "speaker.wave.3.fill", variableValue: player.volume)
-                        .font(.system(size: 11))
-                        .foregroundStyle(Color.white.opacity(0.55))
-                        .frame(width: 18)
-                    MiniSlider(
-                        value: Binding(
-                            get: { player.volume },
-                            set: { player.setVolume($0) }
-                        ),
-                        tint: Color.white.opacity(0.9),
-                        onEnd: { player.commitVolume() }
-                    )
-                    .frame(width: 58)
-                }
+            HStack(spacing: 6) {
+                Image(systemName: "speaker.wave.3.fill", variableValue: player.volume)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.white.opacity(0.55))
+                    .frame(width: 18)
+                MiniSlider(
+                    value: Binding(
+                        get: { player.volume },
+                        set: { player.setVolume($0) }
+                    ),
+                    tint: Color.white.opacity(0.9),
+                    onEnd: { player.commitVolume() }
+                )
+                .frame(width: 58)
             }
         }
         .frame(height: 44)
@@ -376,11 +392,12 @@ struct ProgressRow: View {
                                 scrub = nil
                             }
                     )
+                    .allowsHitTesting(player.canControl)
                 }
                 .frame(height: 12)
                 .onHover { hover = $0 }
                 .animation(.spring(response: 0.25, dampingFraction: 0.75), value: active)
-                .focusable()
+                .focusable(player.canControl)
                 .onMoveCommand { direction in
                     switch direction {
                     case .left: player.seek(to: max(0, position - 5))
@@ -419,55 +436,5 @@ struct ProgressRow: View {
     private func format(_ seconds: Double) -> String {
         let total = Int(seconds.rounded())
         return String(format: "%d:%02d", total / 60, total % 60)
-    }
-}
-
-// MARK: - Aviso de permiso (Automatización)
-
-/// Aparece cuando macOS no deja que NotchIsland controle el reproductor: los botones, la barra y la
-/// posición no funcionarían, así que se explica y se lleva directo a Ajustes.
-struct AutomationNotice: View {
-    @ObservedObject var player: NowPlayingModel
-
-    private var name: String {
-        player.permissionNotice == .spotify ? "Spotify" : "Música"
-    }
-
-    var body: some View {
-        HStack(spacing: 9) {
-            Image(systemName: "lock.shield.fill")
-                .font(.system(size: 17))
-                .foregroundStyle(Color.white.opacity(0.8))
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Permite controlar \(name)")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.white)
-                Text("Ajustes › Privacidad › Automatización")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.5))
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 4)
-
-            Button {
-                player.openAutomationSettings()
-            } label: {
-                Text("Abrir Ajustes")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.black)
-                    .padding(.horizontal, 11)
-                    .frame(height: 26)
-                    .background(Capsule().fill(Color.white))
-            }
-            .buttonStyle(ScaleButtonStyle())
-        }
-        .padding(.horizontal, 11)
-        .frame(height: 42)
-        .background(
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(Color.white.opacity(0.11))
-        )
     }
 }

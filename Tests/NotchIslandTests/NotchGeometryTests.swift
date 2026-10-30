@@ -20,7 +20,7 @@ final class NotchGeometryTests: XCTestCase {
 
         XCTAssertEqual(geometry.screenFrame, builtIn.frame)
         XCTAssertEqual(geometry.notchSize, CGSize(width: 264, height: 37))
-        XCTAssertEqual(geometry.expandedSize, CGSize(width: 520, height: 201))
+        XCTAssertEqual(geometry.expandedSize, CGSize(width: 460, height: 193))
     }
 
     func testNoNotchUsesExternalScreenUnderPointer() {
@@ -35,7 +35,7 @@ final class NotchGeometryTests: XCTestCase {
 
         XCTAssertEqual(geometry.screenFrame, external.frame)
         XCTAssertEqual(geometry.notchSize, NotchGeometry.fakeNotch)
-        XCTAssertEqual(geometry.expandedSize, CGSize(width: 520, height: 196))
+        XCTAssertEqual(geometry.expandedSize, CGSize(width: 460, height: 188))
     }
 
     func testPointerOutsideScreensFallsBackToMainScreen() {

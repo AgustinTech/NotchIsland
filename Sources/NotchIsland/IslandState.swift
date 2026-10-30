@@ -36,25 +36,25 @@ enum IslandVisualSize: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .normal: return "Normal"
-        case .wide: return "Amplio"
-        case .large: return "Grande"
+        case .normal: return "Compacto"
+        case .wide: return "Clásico"
+        case .large: return "Amplio"
         }
     }
 
     var width: CGFloat {
         switch self {
-        case .normal: return 520
-        case .wide: return 580
-        case .large: return 640
+        case .normal: return 460
+        case .wide: return 520
+        case .large: return 580
         }
     }
 
     var extraHeight: CGFloat {
         switch self {
-        case .normal: return 164
-        case .wide: return 184
-        case .large: return 204
+        case .normal: return 156
+        case .wide: return 172
+        case .large: return 192
         }
     }
 }

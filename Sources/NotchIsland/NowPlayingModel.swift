@@ -19,8 +19,8 @@ enum Player: Hashable {
 }
 
 /// Qué suena en Música / Spotify.
-/// - Los cambios llegan por notificaciones del sistema (sin polling).
-/// - Posición, carátula y botones usan AppleScript (macOS pide permiso de Automatización una vez).
+/// - Los cambios llegan por notificaciones del reproductor, sin pedir permisos al detectarlo.
+/// - Posición exacta, carátula y controles usan AppleScript solo si Automatización ya está autorizada.
 /// - Las letras se piden a lrclib.net (solo se envía título, artista, álbum y duración).
 final class NowPlayingModel: ObservableObject {
     @Published var title = ""
@@ -37,26 +37,35 @@ final class NowPlayingModel: ObservableObject {
     @Published var lyrics: [LyricLine] = []
     @Published var lyricsState: LyricsState = .idle
     @Published var volume: Double = 0.5
-    /// Reproductor abierto al que macOS no deja controlar a NotchIsland (permiso de Automatización).
-    @Published private(set) var blockedPlayer: Player?
+    @Published private(set) var detectedPlayer: Player?
+    @Published private(set) var automationAllowed = Set<Player>()
 
     private var lastVolumeSend = Date.distantPast
     private var current: Player?
     private var trackKey = ""
     /// Invalida lecturas de AppleScript que terminan después de un cambio de reproducción.
     private var refreshRevision = 0
+    /// Evita acumular consultas si AppleScript queda esperando a otra app o a un permiso.
+    private var refreshQueued = Set<Player>()
     private var lyricsEnabled = UserDefaults.standard.bool(forKey: "showLyrics")
     private var lyricsRevision = 0
     private var basePosition: TimeInterval = 0
     private var baseStamp = Date()
+    /// Corrección de desfase en curso: se reparte en unos segundos (ajustando la velocidad del
+    /// reloj) en vez de saltar, para que la letra y la barra nunca retrocedan ni den tirones.
+    private struct Drift {
+        let delta: TimeInterval
+        let start: Date
+        let span: TimeInterval
+    }
+    private var drift: Drift?
     private var tokens: [NSObjectProtocol] = []
     private var workspaceTokens: [NSObjectProtocol] = []
     private let queue = DispatchQueue(label: "notchisland.applescript")
-    /// Los avisos de permiso pueden quedarse esperando a que contestes: van en su propia cola.
+    /// La consulta de permisos se hace fuera del hilo principal y nunca muestra el diálogo de macOS.
     private let permissionQueue = DispatchQueue(label: "notchisland.permissions")
-    private var askedPermission: Set<Player> = []
     private var reconcileTimer: Timer?
-    private var permissionPoll: Timer?
+    private var systemQueryBusy = false
 
     // Cuenta de Spotify (API web): estado y controles en cualquier dispositivo, sin permisos de Automatización.
     let spotify = SpotifyAccount()
@@ -69,21 +78,25 @@ final class NowPlayingModel: ObservableObject {
     /// Tras saltar en la barra, se ignora la posición que devuelve Spotify un momento (llega con retraso).
     private var seekHoldUntil = Date.distantPast
 
-    /// Lo usa `run` (estático) para avisar de un permiso denegado.
+    /// Lo usa `run` para reflejar una revocación de Automatización.
     private static weak var shared: NowPlayingModel?
 
     var hasTrack: Bool { !title.isEmpty }
 
-    /// Permiso pendiente que merece avisar (con Spotify vinculado ya no hace falta para Spotify).
-    var permissionNotice: Player? {
-        if blockedPlayer == .spotify && spotifyLinked { return nil }
-        return blockedPlayer
+    var canControl: Bool {
+        useWeb || (target().map { automationAllowed.contains($0) } ?? false)
     }
 
     /// Posición actual calculada a partir de la última lectura (no hace falta consultar cada segundo).
     func position(at date: Date = Date()) -> TimeInterval {
         var p = basePosition
         if isPlaying { p += date.timeIntervalSince(baseStamp) }
+        if let drift {
+            let t = date.timeIntervalSince(drift.start)
+            if t >= 0, t < drift.span {
+                p += drift.delta * (1 - t / drift.span)
+            }
+        }
         p = max(0, p)
         return duration > 0 ? min(p, duration) : p
     }
@@ -91,6 +104,16 @@ final class NowPlayingModel: ObservableObject {
     private func setBase(_ p: TimeInterval) {
         basePosition = p
         baseStamp = Date()
+        drift = nil
+        objectWillChange.send()
+    }
+
+    /// Recalibración suave: la base sigue donde está la barra ahora y el desvío respecto a lo que
+    /// dice el reproductor se aplica repartido en `span` segundos (invisible para el ojo).
+    private func easePosition(to target: TimeInterval, from shown: TimeInterval) {
+        basePosition = shown
+        baseStamp = Date()
+        drift = Drift(delta: target - shown, start: Date(), span: 2.0)
         objectWillChange.send()
     }
 
@@ -124,7 +147,7 @@ final class NowPlayingModel: ObservableObject {
         spotifyLinked = spotify.isLinked
         if spotifyLinked { startWebPolling() }
 
-        // Al abrir o cerrar Música / Spotify: se reconcilia el estado y se piden permisos si hace falta.
+        // Detecta los reproductores abiertos y consulta en silencio si ya tienen autorización.
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
             workspaceTokens.append(workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
@@ -134,73 +157,54 @@ final class NowPlayingModel: ObservableObject {
             })
         }
 
-        for player in [Player.music, Player.spotify] where player.isRunning {
-            checkPermission(player, ask: true)
-            refresh(player)
-        }
+        updateDetectedPlayer()
+        recheckPermissions()
         updateReconcile()
+        refreshSystemPlayback()
     }
 
     // MARK: - Permiso de Automatización
 
-    /// `ask: true` hace que macOS muestre el aviso de permiso (una sola vez por reproductor y arranque).
-    private func checkPermission(_ player: Player, ask: Bool) {
-        if ask {
-            guard !askedPermission.contains(player) else { return }
-            askedPermission.insert(player)
-        }
+    private func checkPermission(_ player: Player) {
         permissionQueue.async { [weak self] in
             guard player.isRunning else { return }
-            let target = NSAppleEventDescriptor(bundleIdentifier: player.bundleID)
-            let status = AEDeterminePermissionToAutomateTarget(target.aeDesc, typeWildCard, typeWildCard, ask)
+            let allowed = Self.hasAutomationPermission(for: player)
             DispatchQueue.main.async {
-                guard let self else { return }
-                if status == noErr {
-                    if self.blockedPlayer == player { self.blockedPlayer = nil }
-                    self.stopPermissionPoll()
-                    if ask { self.refresh(player) }
-                } else if status == OSStatus(errAEEventNotPermitted) {
-                    self.blockedPlayer = player
-                }
+                guard let self, player.isRunning else { return }
+                let wasAllowed = self.automationAllowed.contains(player)
+                if allowed && !wasAllowed { self.automationAllowed.insert(player) }
+                if !allowed && wasAllowed { self.automationAllowed.remove(player) }
+                self.updateReconcile()
+                if allowed && !wasAllowed { self.refresh(player) }
             }
         }
     }
 
-    /// Vuelve a mirar el permiso (barato): por ejemplo al abrir la pestaña de música.
+    /// Comprueba permisos existentes sin solicitar otros nuevos.
     func recheckPermissions() {
         for player in [Player.music, Player.spotify] where player.isRunning {
-            checkPermission(player, ask: false)
+            checkPermission(player)
         }
     }
 
-    /// Abre Ajustes del Sistema > Privacidad > Automatización y espera a que lo concedas.
-    func openAutomationSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
-            NSWorkspace.shared.open(url)
-        }
-        permissionPoll?.invalidate()
-        var tries = 0
-        let timer = Timer(timeInterval: 2, repeats: true) { [weak self] timer in
-            tries += 1
-            self?.recheckPermissions()
-            if tries > 45 || self?.blockedPlayer == nil { timer.invalidate() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        permissionPoll = timer
-    }
-
-    private func stopPermissionPoll() {
-        permissionPoll?.invalidate()
-        permissionPoll = nil
+    private static func hasAutomationPermission(for player: Player) -> Bool {
+        let target = NSAppleEventDescriptor(bundleIdentifier: player.bundleID)
+        return AEDeterminePermissionToAutomateTarget(target.aeDesc, typeWildCard, typeWildCard, false) == noErr
     }
 
     fileprivate static func reportDenied(_ player: Player) {
-        DispatchQueue.main.async { shared?.blockedPlayer = player }
+        DispatchQueue.main.async {
+            guard let model = shared, model.automationAllowed.contains(player) else { return }
+            model.automationAllowed.remove(player)
+            model.updateReconcile()
+        }
     }
 
     fileprivate static func reportAllowed(_ player: Player) {
         DispatchQueue.main.async {
-            if shared?.blockedPlayer == player { shared?.blockedPlayer = nil }
+            guard let model = shared, !model.automationAllowed.contains(player) else { return }
+            model.automationAllowed.insert(player)
+            model.updateReconcile()
         }
     }
 
@@ -208,31 +212,65 @@ final class NowPlayingModel: ObservableObject {
 
     private func playerAppChanged(_ player: Player, launched: Bool) {
         if launched {
-            checkPermission(player, ask: true)
+            checkPermission(player)
+            refreshSystemPlayback()
         } else if current == player {
             refreshRevision &+= 1
             clear()
         }
-        if blockedPlayer == player && !launched { blockedPlayer = nil }
+        if !launched { automationAllowed.remove(player) }
+        updateDetectedPlayer()
         updateReconcile()
     }
 
-    /// Mientras Música o Spotify estén abiertos se comprueba el estado cada pocos segundos: si se
-    /// perdiera un aviso (o cambia la canción sola), la isla se corrige sin tocar nada.
+    private func updateDetectedPlayer() {
+        detectedPlayer = [Player.spotify, .music].first { $0.isRunning }
+    }
+
+    /// Mientras Música o Spotify estén abiertos se comprueba el estado cada 2,5 s: con lecturas
+    /// tan frecuentes y corrección suave, la letra y el progreso van clavados al reproductor.
     private func updateReconcile() {
         let running = [Player.music, Player.spotify].contains { $0.isRunning }
         if running, reconcileTimer == nil {
-            let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
+            let timer = Timer(timeInterval: 2.5, repeats: true) { [weak self] _ in
                 guard let self else { return }
-                let player = self.current ?? [Player.spotify, Player.music].first { $0.isRunning }
-                if let player, player.isRunning { self.refresh(player) }
+                self.refreshSystemPlayback()
+                let player = self.current.flatMap { self.automationAllowed.contains($0) ? $0 : nil }
+                    ?? [Player.spotify, Player.music].first { $0.isRunning && self.automationAllowed.contains($0) }
+                if let player { self.refresh(player) }
             }
-            timer.tolerance = 2
+            timer.tolerance = 1
             RunLoop.main.add(timer, forMode: .common)
             reconcileTimer = timer
         } else if !running {
             reconcileTimer?.invalidate()
             reconcileTimer = nil
+        }
+    }
+
+    /// Recupera una canción que ya sonaba antes del arranque, sin solicitar
+    /// Automatización. Una lectura vacía no borra datos recibidos del reproductor.
+    private func refreshSystemPlayback() {
+        guard !systemQueryBusy else { return }
+        systemQueryBusy = true
+        let revision = refreshRevision
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let snapshot = SystemNowPlaying.query()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.systemQueryBusy = false
+                guard let snapshot, snapshot.player.isRunning,
+                      self.refreshRevision == revision else { return }
+                if let current = self.current, current != snapshot.player, !snapshot.playing { return }
+                if snapshot.player == .spotify, self.spotifyLinked,
+                   Date().timeIntervalSince(self.lastWebActive) < 8 { return }
+                self.refreshRevision &+= 1
+                self.apply(
+                    title: snapshot.title, artist: snapshot.artist, album: snapshot.album,
+                    playing: snapshot.playing, duration: snapshot.duration,
+                    position: snapshot.position, from: snapshot.player, smooth: true
+                )
+            }
         }
     }
 
@@ -378,6 +416,7 @@ final class NowPlayingModel: ObservableObject {
     }
 
     func previous() {
+        guard canControl else { return }
         if position() > 3 {
             seekHoldUntil = Date().addingTimeInterval(2)
             setBase(0)   // con más de 3 s, "anterior" reinicia la canción
@@ -387,6 +426,7 @@ final class NowPlayingModel: ObservableObject {
     }
 
     func seek(to time: TimeInterval) {
+        guard canControl else { return }
         seekHoldUntil = Date().addingTimeInterval(2.5)
         if useWeb {
             refreshRevision &+= 1
@@ -452,7 +492,7 @@ final class NowPlayingModel: ObservableObject {
 
     @discardableResult
     private func send(_ command: String) -> Bool {
-        guard let player = target() else { return false }
+        guard let player = target(), automationAllowed.contains(player) else { return false }
         refreshRevision &+= 1
         let script = "tell application \"\(player.appName)\" to \(command)"
         queue.async {
@@ -492,8 +532,8 @@ final class NowPlayingModel: ObservableObject {
             position: position,
             from: player
         )
-        // Lectura exacta de la posición (y duración) por AppleScript.
-        refresh(player)
+        // Los avisos bastan para detectar la canción; la lectura exacta solo usa permisos existentes.
+        if automationAllowed.contains(player) { refresh(player) }
     }
 
     private func apply(
@@ -522,9 +562,16 @@ final class NowPlayingModel: ObservableObject {
         } else if changed {
             self.duration = 0
         }
-        // Con lecturas periódicas, la barra solo se recoloca si se desvía de verdad (sin tirones).
-        if smooth, !changed, wasPlaying == playing, let position, abs(position - carried) < 1.2 {
-            objectWillChange.send()
+        // Con lecturas periódicas, la barra solo se recoloca si se desvía de verdad. Los desvíos
+        // pequeños se corrigen de forma gradual (nunca saltando hacia atrás: la letra se buguearía).
+        if smooth, !changed, wasPlaying == playing, let position {
+            if abs(position - carried) < 0.2 {
+                objectWillChange.send()
+            } else if abs(position - carried) < 2.0 {
+                easePosition(to: position, from: carried)
+            } else {
+                setBase(position)
+            }
         } else {
             setBase(position ?? carried)
         }
@@ -559,8 +606,9 @@ final class NowPlayingModel: ObservableObject {
     }
 
     private func refresh(_ player: Player) {
-        guard player.isRunning else { return }
+        guard player.isRunning, automationAllowed.contains(player) else { return }
         if player == .spotify, spotifyLinked, Date().timeIntervalSince(lastWebActive) < 8 { return }
+        guard refreshQueued.insert(player).inserted else { return }
         let revision = refreshRevision
         let script = """
         tell application "\(player.appName)"
@@ -576,6 +624,11 @@ final class NowPlayingModel: ObservableObject {
         end tell
         """
         queue.async { [weak self] in
+            defer {
+                DispatchQueue.main.async { [weak self] in
+                    self?.refreshQueued.remove(player)
+                }
+            }
             guard let text = Self.run(script, player: player)?.stringValue else { return }
             if text.isEmpty {
                 // El reproductor está parado: si era el que mostrábamos, se limpia.
@@ -604,7 +657,10 @@ final class NowPlayingModel: ObservableObject {
                     playing: parts[3].lowercased() == "playing",
                     duration: duration,
                     position: position,
-                    from: player
+                    from: player,
+                    // Lectura periódica: se corrige con suavidad (un salto aquí reiniciaría
+                    // la marquesina de la letra cada pocos segundos).
+                    smooth: true
                 )
             }
         }
@@ -614,7 +670,7 @@ final class NowPlayingModel: ObservableObject {
 
     private func fetchArtwork(for player: Player, key: String) {
         let webURL = player == .spotify ? pendingArtworkURL : nil
-        guard player.isRunning || webURL != nil else { return }
+        guard webURL != nil || (player.isRunning && automationAllowed.contains(player)) else { return }
         queue.async { [weak self] in
             switch player {
             case .spotify:
@@ -740,8 +796,12 @@ final class NowPlayingModel: ObservableObject {
 
     // MARK: - AppleScript
 
-    /// Ejecuta AppleScript. Si se indica el reproductor, se anota si macOS bloquea el permiso (-1743).
+    /// Nunca envía AppleEvents a un reproductor sin autorización previa de macOS.
     private static func run(_ source: String, player: Player? = nil) -> NSAppleEventDescriptor? {
+        if let player, !hasAutomationPermission(for: player) {
+            reportDenied(player)
+            return nil
+        }
         var errorInfo: NSDictionary?
         let result: NSAppleEventDescriptor? = NSAppleScript(source: source)?.executeAndReturnError(&errorInfo)
         if let errorInfo = errorInfo {

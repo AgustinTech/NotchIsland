@@ -62,7 +62,10 @@ struct NotchGeometry {
         return NotchGeometry(
             screenFrame: screen.frame,
             notchSize: notch,
-            expandedSize: CGSize(width: 520, height: notch.height + 164)
+            expandedSize: CGSize(
+                width: IslandVisualSize.normal.width,
+                height: notch.height + IslandVisualSize.normal.extraHeight
+            )
         )
     }
 

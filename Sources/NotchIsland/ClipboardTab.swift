@@ -279,7 +279,7 @@ struct ClipboardTab: View {
             ClipEmptyState(
                 symbol: "doc.on.clipboard",
                 title: ClipFilter.all.emptyTitle,
-                subtitle: "Lo que copies aparecerá aquí"
+                subtitle: "Lo que copies y tus capturas aparecerán aquí"
             )
         } else {
             ClipEmptyState(

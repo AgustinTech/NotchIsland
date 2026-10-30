@@ -351,10 +351,18 @@ struct ClipCard: View {
                 .interpolation(.high)
                 .frame(width: 15, height: 15)
         } else {
-            Image(systemName: item.sourceName == "Otro dispositivo" ? "iphone" : "app.dashed")
+            Image(systemName: sourceSymbol)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Color.white.opacity(0.6))
                 .frame(width: 15, height: 15)
+        }
+    }
+
+    private var sourceSymbol: String {
+        switch item.sourceName {
+        case "Otro dispositivo": return "iphone"
+        case "Captura de pantalla": return "camera.viewfinder"
+        default: return "app.dashed"
         }
     }
 
@@ -546,18 +554,32 @@ struct ClipEmptyState: View {
                 }
             }
 
-            VStack(spacing: 5) {
-                Image(systemName: symbol)
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.75))
-                    .symbolEffect(.pulse, options: .repeating.speed(0.35))
+            VStack(spacing: 0) {
+                ZStack {
+                    Circle().fill(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.14), Color.white.opacity(0.06)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    Image(systemName: symbol)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.85))
+                        .symbolEffect(.pulse, options: .repeating.speed(0.35))
+                }
+                .frame(width: 32, height: 32)
+                .overlay(Circle().strokeBorder(Color.white.opacity(0.14), lineWidth: 0.8))
+                .padding(.bottom, 9)
+
                 Text(title)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Color.white.opacity(0.85))
                 Text(subtitle)
                     .font(.system(size: 10.5))
-                    .foregroundStyle(Color.white.opacity(0.45))
+                    .foregroundStyle(Color.white.opacity(0.4))
                     .multilineTextAlignment(.center)
+                    .padding(.top, 3)
                 if let buttonTitle {
                     Button(action: action) {
                         Text(buttonTitle)
@@ -568,7 +590,7 @@ struct ClipEmptyState: View {
                             .background(Capsule().fill(Color.white.opacity(0.14)))
                     }
                     .buttonStyle(ScaleButtonStyle())
-                    .padding(.top, 2)
+                    .padding(.top, 8)
                 }
             }
             .padding(.horizontal, 24)
@@ -589,24 +611,52 @@ struct ClipEmptyState: View {
     private func ghost(_ index: Int) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 6) {
-                Circle().fill(Color.white.opacity(0.07)).frame(width: 14, height: 14)
-                Capsule().fill(Color.white.opacity(0.07)).frame(width: 40, height: 5)
+                Circle().fill(Color.white.opacity(0.09)).frame(width: 14, height: 14)
+                Capsule().fill(Color.white.opacity(0.09)).frame(width: 40, height: 5)
             }
-            Capsule().fill(Color.white.opacity(0.05)).frame(height: 5)
-            Capsule().fill(Color.white.opacity(0.05)).frame(width: index == 1 ? 70 : 96, height: 5)
-            Capsule().fill(Color.white.opacity(0.05)).frame(width: 56, height: 5)
+            if index == 1 {
+                // La tarjeta del centro imita una imagen (como el visor del carrusel).
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.10), Color.white.opacity(0.04)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(height: 34)
+                    .frame(maxWidth: .infinity)
+            }
+            Capsule().fill(Color.white.opacity(0.07)).frame(height: 5)
+            Capsule().fill(Color.white.opacity(0.07)).frame(width: index == 1 ? 70 : 96, height: 5)
             Spacer(minLength: 0)
         }
         .padding(11)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.white.opacity(0.03))
+                .fill(
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.055), Color.white.opacity(0.025)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .overlay(
+                    // Brillo de cristal en la mitad superior.
+                    LinearGradient(
+                        colors: [Color.white.opacity(0.05), Color.white.opacity(0)],
+                        startPoint: .top,
+                        endPoint: .center
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                )
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.07), lineWidth: 0.8)
+                        .strokeBorder(Color.white.opacity(index == 1 ? 0.11 : 0.08), lineWidth: 0.8)
                 )
         )
+        .scaleEffect(index == 1 ? 1.03 : 1, anchor: .center)
         .opacity(1 - Double(index) * 0.18)
     }
 }

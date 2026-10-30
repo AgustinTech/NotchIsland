@@ -73,6 +73,11 @@ final class ClipboardModel: ObservableObject {
     private var terminateObserver: NSObjectProtocol?
     private let queue = DispatchQueue(label: "notchisland.clipboard", qos: .utility)
 
+    // Capturas de pantalla.
+    private var screenshotFolder: URL?
+    private var screenshotCheck = Date()
+    private var screenshotTick = 0
+
     private static let thumbnails: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
         cache.countLimit = 60
@@ -110,6 +115,8 @@ final class ClipboardModel: ObservableObject {
     private func tick() {
         let enabled = Self.captureEnabled
         if enabled != capturing { capturing = enabled }
+
+        pollScreenshots()
 
         let count = pasteboard.changeCount
         guard count != lastChange else { return }
@@ -286,6 +293,76 @@ final class ClipboardModel: ObservableObject {
             }
         }
         return nil
+    }
+
+    // MARK: - Capturas de pantalla
+
+    /// macOS guarda las capturas directamente en una carpeta sin pasar por el portapapeles,
+    /// así que se vigila la carpeta configurada (Escritorio por defecto) y se añaden aquí.
+    static func screenshotFolder() -> URL {
+        if let custom = UserDefaults(suiteName: "com.apple.screencapture")?.string(forKey: "location"),
+           !custom.isEmpty {
+            return URL(fileURLWithPath: (custom as NSString).expandingTildeInPath, isDirectory: true)
+        }
+        return FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
+    }
+
+    /// El sistema nombra las capturas siempre con fecha y hora: "Captura de pantalla
+    /// 2026-10-30 a las 16.35.23.png" (en cualquier idioma). Eso las distingue de otras imágenes.
+    static func looksLikeScreenshot(_ name: String) -> Bool {
+        guard let regex = try? NSRegularExpression(
+            pattern: #"\d{4}-\d{2}-\d{2}.{0,12}\d{1,2}[.:]\d{2}[.:]\d{2}"#
+        ) else { return false }
+        let range = NSRange(name.startIndex..., in: name)
+        guard regex.firstMatch(in: name, range: range) != nil else { return false }
+        let ext = (name as NSString).pathExtension.lowercased()
+        return ["png", "jpg", "jpeg", "heic", "tiff"].contains(ext)
+    }
+
+    private func pollScreenshots() {
+        guard Self.captureEnabled else { return }
+        screenshotTick += 1
+        // La carpeta configurada se relee cada 10 s (cambiarla es raro).
+        if screenshotTick % 20 == 1 || screenshotFolder == nil {
+            screenshotFolder = Self.screenshotFolder()
+        }
+        guard let folder = screenshotFolder else { return }
+        let since = screenshotCheck
+        screenshotCheck = Date().addingTimeInterval(-1.5)
+        queue.async { [weak self] in
+            guard let self else { return }
+            let files = (try? FileManager.default.contentsOfDirectory(
+                at: folder, includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+                options: [.skipsHiddenFiles]
+            )) ?? []
+            let found: [(url: URL, date: Date, bytes: Int64)] = files.compactMap { url in
+                guard Self.looksLikeScreenshot(url.lastPathComponent),
+                      let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+                      let mod = values.contentModificationDate, mod > since else { return nil }
+                return (url, mod, Int64(values.fileSize ?? 0))
+            }
+            guard !found.isEmpty else { return }
+            DispatchQueue.main.async { self.absorbScreenshots(found) }
+        }
+    }
+
+    private func absorbScreenshots(_ found: [(url: URL, date: Date, bytes: Int64)]) {
+        let taken = Set(items.flatMap(\.paths))
+        for entry in found where !taken.contains(entry.url.path) {
+            queue.async { [weak self] in
+                guard let self,
+                      let data = try? Data(contentsOf: entry.url),
+                      let stored = Self.store(data, in: self.imagesDirectory) else { return }
+                DispatchQueue.main.async {
+                    var capture = Capture(
+                        kind: .image, key: Self.digest("screenshot", entry.url.path),
+                        bytes: entry.bytes, image: stored
+                    )
+                    capture.sourceName = "Captura de pantalla"
+                    self.ingest(capture, date: entry.date)
+                }
+            }
+        }
     }
 
     private static func link(from text: String) -> URL? {
